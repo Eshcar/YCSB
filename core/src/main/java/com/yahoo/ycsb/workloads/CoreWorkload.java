@@ -172,7 +172,7 @@ public class CoreWorkload extends Workload
 	 * The name of the property for the proportion of transactions that are inserts.
 	 */
 	public static final String INSERT_PROPORTION_PROPERTY="insertproportion";
-	
+
 	/**
 	 * The default proportion of transactions that are inserts.
 	 */
@@ -356,11 +356,16 @@ public class CoreWorkload extends Workload
 		{
 			operationchooser.addValue(insertproportion,"INSERT");
 		}
-		
+
 		if (scanproportion>0)
 		{
 			operationchooser.addValue(scanproportion,"SCAN");
-		}
+            if ( (p.getProperty("multiplesteps")!=null) &&
+                    (p.getProperty("multiplesteps").compareTo("true")==0) ) {
+                System.out.println("Initiating multiple steps measurement for scans ...");
+                Measurements.getMeasurements().initMultipleStepsMeasurement("SCAN", maxscanlength);
+            }
+        }
 		
 		if (readmodifywriteproportion>0)
 		{

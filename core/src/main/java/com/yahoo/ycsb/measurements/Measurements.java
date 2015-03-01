@@ -59,6 +59,8 @@ public class Measurements
 	HashMap<String,OneMeasurement> data;
 	boolean histogram=true;
 
+    HashMap<String,MultipleStepsMeasurement> msData;
+
 	private Properties _props;
 	
       /**
@@ -67,6 +69,7 @@ public class Measurements
 	public Measurements(Properties props)
 	{
 		data=new HashMap<String,OneMeasurement>();
+        msData = new HashMap<String, MultipleStepsMeasurement>();
 		
 		_props=props;
 		
@@ -91,6 +94,10 @@ public class Measurements
 			return new OneMeasurementTimeSeries(name,_props);
 		}
 	}
+
+    MultipleStepsMeasurement constructMultipleStepsMeasurement(String name, int numSteps) {
+        return new MultipleStepsMeasurement(name, numSteps);
+    }
 
       /**
        * Report a single value of a single metric. E.g. for read latency, operation="READ" and latency is the measured value.
@@ -118,6 +125,52 @@ public class Measurements
 			e.printStackTrace(System.out);
 		}
 	}
+
+    public void measureStep(String operation, int latency, int step) {
+        try
+        {
+            msData.get(operation).measure(latency,step);
+        }
+        catch (ArrayIndexOutOfBoundsException e)
+        {
+            System.out.println("MultipleStepsMeasurement ERROR: java.lang.ArrayIndexOutOfBoundsException - ignoring and continuing");
+            e.printStackTrace();
+            e.printStackTrace(System.out);
+        }
+        catch (Exception e)
+        {
+            System.out.println("MultipleStepsMeasurement ERROR: ignoring and continuing");
+            e.printStackTrace();
+            e.printStackTrace(System.out);
+        }
+    }
+
+    public void measureStepTimeout(String operation, double timeout) {
+        try {
+            msData.get(operation).measureTimeout(timeout);
+        }
+        catch (Exception e)
+        {
+            System.out.println("MultipleStepsMeasurement measure timeout ERROR: ignoring and continuing");
+            e.printStackTrace();
+            e.printStackTrace(System.out);
+        }
+
+    }
+
+        public MultipleStepsMeasurement initMultipleStepsMeasurement(String operation, int maxNumSteps) {
+        if(!msData.containsKey(operation))
+        {
+            synchronized (this)
+            {
+                if (!msData.containsKey(operation))
+                {
+                    msData.put(operation,constructMultipleStepsMeasurement(operation,maxNumSteps));
+                }
+            }
+        }
+        return msData.get(operation);
+    }
 
       /**
        * Report a return code for a single DB operaiton.
@@ -148,6 +201,10 @@ public class Measurements
     for (OneMeasurement measurement : data.values())
     {
       measurement.exportMeasurements(exporter);
+    }
+    for(MultipleStepsMeasurement multipleStepsMeasurement : msData.values())
+    {
+        multipleStepsMeasurement.exportMeasurements(exporter);
     }
   }
 	

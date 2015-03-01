@@ -21,15 +21,17 @@ package com.yahoo.ycsb.db;
 import com.yahoo.ycsb.DBException;
 import com.yahoo.ycsb.ByteIterator;
 import com.yahoo.ycsb.ByteArrayByteIterator;
-import com.yahoo.ycsb.StringByteIterator;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+
 //import java.util.HashMap;
 //import java.util.Properties;
 //import java.util.Set;
 //import java.util.Vector;
 
+import com.yahoo.ycsb.measurements.MultipleStepsMeasurement;
 import com.yahoo.ycsb.measurements.Measurements;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.KeyValue;
@@ -45,6 +47,7 @@ import org.apache.hadoop.hbase.client.ResultScanner;
 //import org.apache.hadoop.hbase.io.RowResult;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.Cell;
 
 /**
  * HBase client for YCSB framework
@@ -56,6 +59,10 @@ public class HBaseClient extends com.yahoo.ycsb.DB
     private static final Configuration config = HBaseConfiguration.create(); //new HBaseConfiguration();
 
     public boolean _debug=false;
+    public boolean _measureMultipleSteps=false;
+    // number of milliseconds waiting per 100 next operations
+    // e.g., 2 milliseconds is equal to 20 microseconds per next operation
+    public int _timeoutPerStep=0;
 
     public String _table="";
     public HTable _hTable=null;
@@ -79,6 +86,17 @@ public class HBaseClient extends com.yahoo.ycsb.DB
                 (getProperties().getProperty("debug").compareTo("true")==0) )
         {
             _debug=true;
+        }
+
+        if ( (getProperties().getProperty("multiplesteps")!=null) &&
+                (getProperties().getProperty("multiplesteps").compareTo("true")==0) )
+        {
+            _measureMultipleSteps=true;
+        }
+
+        String timeout = getProperties().getProperty("steptimeout");
+        if(timeout != null) {
+            _timeoutPerStep = Integer.parseInt(timeout);
         }
 
         _columnFamily = getProperties().getProperty("columnfamily");
@@ -178,7 +196,7 @@ public class HBaseClient extends com.yahoo.ycsb.DB
             return ServerError;
         }
 
-  for (KeyValue kv : r.raw()) {
+  for (Cell kv : r.listCells()) {
     result.put(
         Bytes.toString(kv.getQualifier()),
         new ByteArrayByteIterator(kv.getValue()));
@@ -214,14 +232,18 @@ public class HBaseClient extends com.yahoo.ycsb.DB
             catch (IOException e)
             {
                 System.err.println("Error accessing HBase table: "+e);
+                e.printStackTrace();
                 return ServerError;
             }
         }
 
+        Measurements measurements = Measurements.getMeasurements();
+
         Scan s = new Scan(Bytes.toBytes(startkey));
         //HBase has no record limit.  Here, assume recordcount is small enough to bring back in one call.
         //We get back recordcount records
-        s.setCaching(recordcount);
+        // eshcar : commented this out to control caching from hbase-site.xml
+        // s.setCaching(recordcount);
 
         //add specified fields or else all fields
         if (fields == null)
@@ -241,7 +263,10 @@ public class HBaseClient extends com.yahoo.ycsb.DB
         try {
             scanner = _hTable.getScanner(s);
             int numResults = 0;
-            for (Result rr = scanner.next(); rr != null; rr = scanner.next())
+
+            long st=System.nanoTime();
+            Result rr = scanner.next();
+            for (; rr != null; )
             {
                 //get row key
                 String key = Bytes.toString(rr.getRow());
@@ -252,18 +277,41 @@ public class HBaseClient extends com.yahoo.ycsb.DB
 
                 HashMap<String,ByteIterator> rowResult = new HashMap<String, ByteIterator>();
 
-                for (KeyValue kv : rr.raw()) {
+                for (Cell kv : rr.listCells()) {
                   rowResult.put(
                       Bytes.toString(kv.getQualifier()),
                       new ByteArrayByteIterator(kv.getValue()));
                 }
                 //add rowResult to result vector
                 result.add(rowResult);
+
+                if (_measureMultipleSteps) {
+                    long en=System.nanoTime();
+                    int latency = (int)((en-st)/1000);
+                    measurements.measureStep("SCAN", latency, numResults);
+
+                    if(_timeoutPerStep > 0) {
+
+                        double micros = 0;
+                        if(MultipleStepsMeasurement.numops % 100 == 0) {
+                            st = System.nanoTime();
+                            TimeUnit.MILLISECONDS.sleep(_timeoutPerStep);
+                            en = System.nanoTime();
+                            micros = ((double) (en - st) / 1000);
+                        }
+                        measurements.measureStepTimeout("SCAN",micros);
+                    }
+
+                }
+
                 numResults++;
                 if (numResults >= recordcount) //if hit recordcount, bail out
                 {
                     break;
                 }
+
+                st=System.nanoTime();
+                rr = scanner.next();
             } //done with row
 
         }
@@ -275,7 +323,9 @@ public class HBaseClient extends com.yahoo.ycsb.DB
             }
             return ServerError;
         }
-
+        catch (InterruptedException e) {
+            e.printStackTrace();
+        }
         finally {
             scanner.close();
         }
