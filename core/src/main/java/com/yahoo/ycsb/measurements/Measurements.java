@@ -145,7 +145,7 @@ public class Measurements
         }
     }
 
-    public void measureStepTimeout(String operation, double timeout) {
+    public void measureStepTimeout(String operation, int timeout) {
         try {
             msData.get(operation).measureTimeout(timeout);
         }
