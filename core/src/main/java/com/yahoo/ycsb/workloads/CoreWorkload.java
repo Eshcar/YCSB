@@ -17,6 +17,7 @@
 
 package com.yahoo.ycsb.workloads;
 
+import java.util.Iterator;
 import java.util.Properties;
 import com.yahoo.ycsb.*;
 import com.yahoo.ycsb.generator.CounterGenerator;
@@ -36,7 +37,9 @@ import com.yahoo.ycsb.measurements.Measurements;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Set;
 import java.util.Vector;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 /**
  * The core benchmark scenario. Represents a set of clients doing simple CRUD operations. The relative 
@@ -179,6 +182,16 @@ public class CoreWorkload extends Workload
 	public static final String INSERT_PROPORTION_PROPERTY_DEFAULT="0.0";
 
 	/**
+	 * The name of the property for the proportion of transactions that are deletes.
+	 */
+	public static final String DELETE_PROPORTION_PROPERTY="deleteproportion";
+
+	/**
+	 * The default proportion of transactions that are inserts.
+	 */
+	public static final String DELETE_PROPORTION_PROPERTY_DEFAULT="0.0";
+
+	/**
 	 * The name of the property for the proportion of transactions that are scans.
 	 */
 	public static final String SCAN_PROPORTION_PROPERTY="scanproportion";
@@ -273,6 +286,8 @@ public class CoreWorkload extends Workload
 	boolean orderedinserts;
 
 	int recordcount;
+
+	Set<String> keySet;
 	
 	protected static IntegerGenerator getFieldLengthGenerator(Properties p) throws WorkloadException{
 		IntegerGenerator fieldlengthgenerator;
@@ -311,6 +326,8 @@ public class CoreWorkload extends Workload
 		double readproportion=Double.parseDouble(p.getProperty(READ_PROPORTION_PROPERTY,READ_PROPORTION_PROPERTY_DEFAULT));
 		double updateproportion=Double.parseDouble(p.getProperty(UPDATE_PROPORTION_PROPERTY,UPDATE_PROPORTION_PROPERTY_DEFAULT));
 		double insertproportion=Double.parseDouble(p.getProperty(INSERT_PROPORTION_PROPERTY,INSERT_PROPORTION_PROPERTY_DEFAULT));
+		double deleteproportion=Double.parseDouble(p.getProperty(DELETE_PROPORTION_PROPERTY,
+				DELETE_PROPORTION_PROPERTY_DEFAULT));
 		double scanproportion=Double.parseDouble(p.getProperty(SCAN_PROPORTION_PROPERTY,SCAN_PROPORTION_PROPERTY_DEFAULT));
 		double readmodifywriteproportion=Double.parseDouble(p.getProperty(READMODIFYWRITE_PROPORTION_PROPERTY,READMODIFYWRITE_PROPORTION_PROPERTY_DEFAULT));
 		recordcount=Integer.parseInt(p.getProperty(Client.RECORD_COUNT_PROPERTY));
@@ -355,6 +372,11 @@ public class CoreWorkload extends Workload
 		if (insertproportion>0)
 		{
 			operationchooser.addValue(insertproportion,"INSERT");
+		}
+
+		if (deleteproportion>0)
+		{
+			operationchooser.addValue(deleteproportion,"DELETE");
 		}
 
 		if (scanproportion>0)
@@ -423,6 +445,7 @@ public class CoreWorkload extends Workload
 		{
 			throw new WorkloadException("Distribution \""+scanlengthdistrib+"\" not allowed for scan length");
 		}
+		keySet = new ConcurrentSkipListSet<String>();
 	}
 
 	public String buildKeyName(long keynum) {
@@ -491,6 +514,10 @@ public class CoreWorkload extends Workload
 		{
 			doTransactionInsert(db);
 		}
+		else if (op.compareTo("DELETE")==0)
+		{
+			doTransactionDelete(db);
+		}
 		else if (op.compareTo("SCAN")==0)
 		{
 			doTransactionScan(db);
@@ -503,7 +530,7 @@ public class CoreWorkload extends Workload
 		return true;
 	}
 
-    int nextKeynum() {
+	int nextKeynum() {
         int keynum;
         if(keychooser instanceof ExponentialGenerator) {
             do
@@ -629,7 +656,7 @@ public class CoreWorkload extends Workload
 		   //update a random field
 		   values = buildUpdate();
 		}
-
+		keySet.add(keyname);
 		db.update(table,keyname,values);
 	}
 
@@ -642,5 +669,26 @@ public class CoreWorkload extends Workload
 
 		HashMap<String, ByteIterator> values = buildValues();
 		db.insert(table,dbkey,values);
+		keySet.add(dbkey);
 	}
+
+	private void doTransactionDelete(DB db) {
+		//choose the next key
+		String dbkey = chooseExistingKey();
+
+		db.delete(table,dbkey);
+		keySet.remove(dbkey);
+
+	}
+
+	private String chooseExistingKey() {
+		Iterator<String> iter = keySet.iterator();
+		int ret=Utils.random().nextInt(keySet.size());
+		String res = "NO_KEY";
+		for(int i = 0;i<ret && iter.hasNext(); i++) {
+			res = iter.next();
+		}
+		return res;
+	}
+
 }
